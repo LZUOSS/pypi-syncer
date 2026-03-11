@@ -1,0 +1,23 @@
+[Unit]
+Description=PyPI mirror HTTP server
+After=network.target
+
+[Service]
+Type=simple
+User=mirror
+Group=mirror
+ExecStart=/usr/local/bin/pypi-syncer serve -c /etc/pypi-sync/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Log rotation: send SIGUSR1 to reopen the access log
+ExecReload=/bin/kill -USR1 $MAINPID
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/mnt/9traid/pypi /mnt/cache/pypi /mnt/9traid/pypi-files /var/log/pypi-mirror
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=PyPI mirror index and cache sync
+After=network.target
+
+[Service]
+Type=oneshot
+User=mirror
+Group=mirror
+ExecStart=/usr/local/bin/pypi-syncer sync -c /etc/pypi-sync/config.yaml
+TimeoutStartSec=6h
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/mnt/9traid/pypi /mnt/cache/pypi /mnt/9traid/pypi-files
