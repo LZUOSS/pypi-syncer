@@ -31,7 +31,13 @@ func (s *Server) ServePackages(w http.ResponseWriter, r *http.Request) {
 	// Extract path after /pypi/packages/
 	pathPrefix := s.cfg.Prefix + "/packages/"
 	pkgPath := strings.TrimPrefix(r.URL.Path, pathPrefix)
-	if pkgPath == "" {
+	if pkgPath == "" || strings.Contains(pkgPath, "..") || strings.HasPrefix(pkgPath, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	// Validate path shape: {2-char-hex}/{hex-hash}/{filename}
+	parts := strings.Split(pkgPath, "/")
+	if len(parts) != 3 {
 		http.NotFound(w, r)
 		return
 	}

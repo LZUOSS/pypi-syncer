@@ -19,6 +19,13 @@ var hopByHop = map[string]bool{
 	"Proxy-Authenticate":  true,
 }
 
+// sensitiveHeaders lists headers that must not be forwarded to upstream
+// to avoid leaking client credentials.
+var sensitiveHeaders = map[string]bool{
+	"Authorization": true,
+	"Cookie":        true,
+}
+
 // ReverseProxy forwards r to targetURL and writes the response to w.
 // It strips hop-by-hop headers and streams the response body.
 // client is used to make the upstream request; pass nil to use http.DefaultClient.
@@ -31,9 +38,10 @@ func ReverseProxy(w http.ResponseWriter, r *http.Request, targetURL string, time
 		return err
 	}
 
-	// Forward original headers, skipping hop-by-hop.
+	// Forward original headers, skipping hop-by-hop and sensitive headers.
 	for key, vals := range r.Header {
-		if hopByHop[http.CanonicalHeaderKey(key)] {
+		canonical := http.CanonicalHeaderKey(key)
+		if hopByHop[canonical] || sensitiveHeaders[canonical] {
 			continue
 		}
 		for _, v := range vals {

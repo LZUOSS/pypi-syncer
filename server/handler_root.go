@@ -54,7 +54,7 @@ func (s *Server) ServeRoot(w http.ResponseWriter, r *http.Request) {
 	if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
 		scheme = "http"
 	}
-	baseURL := scheme + "://" + publicHost
+	baseURL := scheme + "://" + host
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>

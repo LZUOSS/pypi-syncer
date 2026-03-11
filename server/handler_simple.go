@@ -41,11 +41,13 @@ func (s *Server) ServeSimple(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveSimpleFile(w http.ResponseWriter, r *http.Request, filePath, suffix string) {
-	data, err := os.ReadFile(filePath)
+	// Check file exists before setting content type.
+	f, err := os.Open(filePath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
+	f.Close()
 
 	switch suffix {
 	case ".v1_json":
@@ -53,5 +55,7 @@ func serveSimpleFile(w http.ResponseWriter, r *http.Request, filePath, suffix st
 	default:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
-	w.Write(data)
+	// http.ServeFile handles If-Modified-Since, ETag, Range, and streaming.
+	// It will not override the Content-Type already set above.
+	http.ServeFile(w, r, filePath)
 }
