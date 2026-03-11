@@ -1,54 +1,110 @@
+# pypi-mirror example configuration
+# Copy to config.yaml and edit before running.
+
+# TCP address to listen on.
 listen: ":8080"
+
+# Directory where all mirror data is stored:
+#   {repo_path}/simple/     - index pages
+#   {repo_path}/json/       - package JSON metadata
+#   {repo_path}/packages/   - cached package files  <-- this is the cache location
+#   {repo_path}/pypi-mirror.db - SQLite database
 repo_path: "/srv/repo/pypi"
+
+# URL path prefix for all endpoints.
+# Clients pip-install with: index-url = https://your-host/pypi/simple/
 prefix: "/pypi"
 
 upstream:
+  # Base URL for the PyPI index and JSON API.
   pypi_url: "https://pypi.org"
+
+  # Base URL for package files. Used both for cache-miss fallback (serve)
+  # and as the download source during cache management (sync).
+  # Set this to a nearby mirror to reduce cross-region traffic.
   packages_url: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/"
 
-# TLS (optional)
+# TLS termination (optional).
+# Omit this section to use plain HTTP (e.g. when terminating TLS at nginx).
 # tls:
-#   cert: "/path/to/cert.pem"
-#   key: "/path/to/key.pem"
+#   cert: "/etc/ssl/certs/pypi.example.com.pem"
+#   key:  "/etc/ssl/private/pypi.example.com.key"
 
-# Trusted proxy headers
+# CIDRs whose X-Forwarded-For header is trusted for real-IP extraction.
+# Include your reverse proxy and any internal load balancer ranges.
 trusted_proxies:
+  - "127.0.0.0/8"
   - "10.0.0.0/8"
   - "172.16.0.0/12"
-  - "127.0.0.0/8"
+  - "192.168.0.0/16"
 
-# IP-based mode for package fallback
+# Per-IP behaviour when a requested package file is not cached locally.
+#
+#   "302"   - redirect the client to packages_url (client fetches directly)
+#   "proxy" - fetch from packages_url server-side and stream to the client
+#             (useful for clients that cannot reach the upstream packages mirror)
+#
+# ip_modes.default applies to all IPs not matched by a rule.
 ip_modes:
   default: "302"
   rules:
+    # Proxy for clients on the local campus network
     - cidr: "202.38.64.0/19"
       mode: "proxy"
     - cidr: "2001:da8:d800::/48"
       mode: "proxy"
 
-# Cache management
 cache:
+  # Maximum total size of locally stored package files.
+  # Accepts suffixes: k, m, g, t (case-insensitive).
   size_limit: "512g"
+
+  # Files larger than this are never downloaded into the cache.
   filesize_limit: "4g"
+
+  # A package file must receive at least this many unique /24 (IPv4) or
+  # /48 (IPv6) votes within vote_window to be eligible for caching.
   min_vote_count: 2
+
+  # Rolling window over which votes are counted.
   vote_window: "7d"
+
+  # Votes from the same IP prefix for the same file within this window
+  # are deduplicated (counted only once).
   dedup_window: "5m"
+
+  # How long to cache remote file-size HEAD responses in the database.
+  # Increase if you want fewer HEAD requests; decrease for fresher sizes.
   size_db_ttl: "2d"
 
-# Sync settings
 sync:
+  # Number of times to retry a failed download before giving up.
   retry: 3
+
+  # Abort the cache download phase after this many consecutive errors.
   download_error_threshold: 5
+
+  # User-Agent sent to upstream PyPI and packages mirror.
   user_agent: "pypi-mirror/1.0"
+
+  # Number of parallel goroutines used when syncing package index pages.
   concurrent_downloads: 4
 
-# Logging (SIGUSR1 to reopen)
+# Access logging. Omit `path` to disable access logging entirely.
+# Send SIGUSR1 to the serve process to reopen the file after rotation.
 log:
   path: "/var/log/pypi-mirror/access.log"
-  format: "mirror-json"   # or "combined"
+  # "mirror-json" - one JSON object per line (recommended for log ingestion)
+  # "combined"    - Apache combined log format
+  format: "mirror-json"
 
 timeouts:
-  read: 30s
-  write: 120s
-  idle: 60s
-  upstream: 60s
+  # Maximum time to read an incoming request (headers + body).
+  read: "30s"
+  # Maximum time to write a complete response.
+  # Set high enough for large package downloads over slow links.
+  write: "120s"
+  # Keep-alive timeout for idle connections.
+  idle: "60s"
+  # Timeout for upstream proxy requests (ip_modes: proxy only).
+  upstream: "60s"
