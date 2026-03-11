@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,9 +23,26 @@ func (s *Server) ServeSimple(w http.ResponseWriter, r *http.Request) {
 	trimmed = strings.TrimSuffix(trimmed, "/")
 
 	if trimmed == "" {
-		// Root index: /pypi/simple/
-		filePath := filepath.Join(s.cfg.RepoPath, "simple", "index"+suffix)
-		serveSimpleFile(w, r, filePath, suffix)
+		// Root index listing is disabled: it contains ~600 k packages and
+		// would produce a response tens of MB in size on every request.
+		// Per-package queries (/pypi/simple/{pkg}/) continue to work normally.
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		prefix := s.cfg.Prefix
+		fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Index listing disabled</title></head>
+<body>
+<h1>403 — Index listing disabled</h1>
+<p>The full package list at <code>%s/simple/</code> has been disabled because
+it contains too many packages (&gt;600&thinsp;000) and the resulting index
+file is tens of megabytes in size.</p>
+<p>Per-package indexes still work normally:<br>
+<code>%s/simple/{package-name}/</code></p>
+<p>pip and uv use per-package lookups by default and are unaffected.</p>
+</body>
+</html>
+`, prefix, prefix)
 		return
 	}
 
