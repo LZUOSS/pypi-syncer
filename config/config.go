@@ -29,6 +29,7 @@ type Config struct {
 type UpstreamConfig struct {
 	PypiURL     string `yaml:"pypi_url"`
 	PackagesURL string `yaml:"packages_url"`
+	RedirectURL string `yaml:"redirect_url"`
 }
 
 type TLSConfig struct {

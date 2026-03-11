@@ -19,10 +19,17 @@ upstream:
   # Base URL for the PyPI index and JSON API.
   pypi_url: "https://pypi.org"
 
-  # Base URL for package files. Used both for cache-miss fallback (serve)
-  # and as the download source during cache management (sync).
+  # Base URL for package files used by the sync/cache downloader,
+  # and for proxy-mode (ip_modes: proxy) requests.
   # Set this to a nearby mirror to reduce cross-region traffic.
   packages_url: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/"
+
+  # Base URL to redirect clients to for 302-mode (ip_modes: "302") requests.
+  # If unset, packages_url is used for both proxying and redirecting.
+  # Set this when you want clients to download directly from a different
+  # URL than the one the server uses internally (e.g. the canonical PyPI
+  # files endpoint or a CDN).
+  # redirect_url: "https://files.pythonhosted.org/packages/"
 
 # TLS termination (optional).
 # Omit this section to use plain HTTP (e.g. when terminating TLS at nginx).

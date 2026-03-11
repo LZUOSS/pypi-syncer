@@ -62,8 +62,6 @@ func (s *Server) ServePackages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// File not cached locally; proxy or redirect to upstream.
-	upstreamURL := strings.TrimSuffix(s.cfg.Upstream.PackagesURL, "/") + "/" + pkgPath
-
 	clientIP := ExtractClientIP(r, s.trustedProxies)
 	mode := s.cfg.IPModes.Default
 	if clientIP != nil {
@@ -71,11 +69,16 @@ func (s *Server) ServePackages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mode == "proxy" {
+		proxyURL := strings.TrimSuffix(s.cfg.Upstream.PackagesURL, "/") + "/" + pkgPath
 		upstreamTimeout := parseDuration(s.cfg.Timeouts.Upstream)
-		if err := ReverseProxy(w, r, upstreamURL, upstreamTimeout); err != nil {
+		if err := ReverseProxy(w, r, proxyURL, upstreamTimeout); err != nil {
 			http.Error(w, "upstream error", http.StatusBadGateway)
 		}
 	} else {
-		http.Redirect(w, r, upstreamURL, http.StatusFound)
+		redirectBase := s.cfg.Upstream.RedirectURL
+		if redirectBase == "" {
+			redirectBase = s.cfg.Upstream.PackagesURL
+		}
+		http.Redirect(w, r, strings.TrimSuffix(redirectBase, "/")+"/"+pkgPath, http.StatusFound)
 	}
 }

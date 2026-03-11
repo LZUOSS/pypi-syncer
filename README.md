@@ -94,7 +94,8 @@ All configuration is in YAML. Duration values accept Go duration syntax (`30s`, 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `pypi_url` | string | `"https://pypi.org"` | Base URL for PyPI index and JSON API |
-| `packages_url` | string | _(required)_ | Base URL for package files (e.g. a regional mirror) |
+| `packages_url` | string | _(required)_ | Base URL for package files — used by the sync downloader and proxy-mode requests |
+| `redirect_url` | string | _(same as `packages_url`)_ | Base URL clients are redirected to in `"302"` mode. Set when the redirect target should differ from the internal download source (e.g. a CDN or the canonical `files.pythonhosted.org`) |
 
 ### `tls`
 
