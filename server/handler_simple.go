@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -59,21 +58,13 @@ file is tens of megabytes in size.</p>
 }
 
 func serveSimpleFile(w http.ResponseWriter, r *http.Request, filePath, suffix string) {
-	// Check file exists before setting content type.
-	f, err := os.Open(filePath)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	f.Close()
-
 	switch suffix {
 	case ".v1_json":
 		w.Header().Set("Content-Type", "application/vnd.pypi.simple.v1+json")
 	default:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
-	// http.ServeFile handles If-Modified-Since, ETag, Range, and streaming.
-	// It will not override the Content-Type already set above.
+	// http.ServeFile handles If-Modified-Since, ETag, Range, streaming, and
+	// 404 for missing files (it overrides our Content-Type only on error).
 	http.ServeFile(w, r, filePath)
 }

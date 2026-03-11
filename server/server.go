@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -67,18 +68,22 @@ func New(cfg *config.Config, database *db.DB, logger *logging.AccessLogger) (*Se
 func (s *Server) Run(ctx context.Context) error {
 	dedupWindow := parseDuration(s.cfg.Cache.DedupWindow)
 
-	// Background vote worker.
-	go func() {
-		for vr := range s.voteCh {
-			prefix := computeIPPrefix(vr.IPAddress)
-			if prefix == "" {
-				continue
+	// Background vote workers. RecordVote is DB-round-trip bound, so run one
+	// worker per logical CPU to keep the DB connection pool busy in parallel.
+	nWorkers := runtime.GOMAXPROCS(0)
+	for range nWorkers {
+		go func() {
+			for vr := range s.voteCh {
+				prefix := computeIPPrefix(vr.IPAddress)
+				if prefix == "" {
+					continue
+				}
+				if err := s.db.RecordVote(vr.FilePath, prefix, dedupWindow); err != nil {
+					log.Printf("vote record error: %v", err)
+				}
 			}
-			if err := s.db.RecordVote(vr.FilePath, prefix, dedupWindow); err != nil {
-				log.Printf("vote record error: %v", err)
-			}
-		}
-	}()
+		}()
+	}
 
 	mux := http.NewServeMux()
 
