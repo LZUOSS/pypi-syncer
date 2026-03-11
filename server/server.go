@@ -87,8 +87,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc(prefix+"/simple/", s.ServeSimple)
 	mux.HandleFunc(prefix+"/simple/{pkg}/", s.ServeSimple)
 	mux.HandleFunc(prefix+"/packages/", s.ServePackages)
-	mux.HandleFunc(prefix+"/{pkg}/json", s.ServeJSON)
 	mux.HandleFunc(prefix+"/web/", s.serveWebRedirect)
+	// Catch-all for /{pkg}/json. Registered last (least specific) so the
+	// fixed routes above are preferred. Using a wildcard pattern here
+	// conflicts with /simple/ in Go 1.22+ ServeMux, so we match manually.
+	mux.HandleFunc(prefix+"/", s.serveCatchAll)
 
 	handler := s.loggingMiddleware(mux)
 
@@ -117,6 +120,23 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// serveCatchAll handles paths not matched by any specific route.
+// Its only job is routing /{prefix}/{pkg}/json to ServeJSON; everything
+// else gets a 404. We cannot register the JSON route as a wildcard pattern
+// (prefix+"/{pkg}/json") because Go 1.22 ServeMux detects an ambiguity
+// with prefix+"/simple/" — both would match prefix+"/simple/json".
+func (s *Server) serveCatchAll(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, s.cfg.Prefix+"/")
+	if strings.HasSuffix(rel, "/json") {
+		pkg := strings.TrimSuffix(rel, "/json")
+		if pkg != "" && !strings.Contains(pkg, "/") {
+			s.ServeJSON(w, r)
+			return
+		}
+	}
+	http.NotFound(w, r)
 }
 
 // serveWebRedirect redirects /pypi/web/ to the upstream PyPI web UI.

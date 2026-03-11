@@ -4,12 +4,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ServeJSON handles /pypi/{pkg}/json requests.
 // Normalize name, redirect if needed, serve {repoPath}/json/{normalized} as application/json.
 func (s *Server) ServeJSON(w http.ResponseWriter, r *http.Request) {
-	pkg := r.PathValue("pkg")
+	// Extract pkg from path: strip prefix and trailing "/json".
+	rel := strings.TrimPrefix(r.URL.Path, s.cfg.Prefix+"/")
+	pkg := strings.TrimSuffix(rel, "/json")
 	if pkg == "" {
 		http.NotFound(w, r)
 		return
