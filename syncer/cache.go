@@ -32,7 +32,9 @@ func NewCacheManager(cfg *config.Config, database *db.DB) (*CacheManager, error)
 	if err != nil {
 		return nil, fmt.Errorf("create transport: %w", err)
 	}
-	client := &http.Client{Timeout: 60 * time.Second, Transport: transport}
+	// No Timeout: package files can be up to filesize_limit (e.g. 4 GB).
+	// ResponseHeaderTimeout on the transport catches stalled connections.
+	client := &http.Client{Transport: transport}
 	dl := NewDownloader(client, cfg.Sync.UserAgent, cfg.Sync.Retry)
 	return &CacheManager{
 		cfg:        cfg,

@@ -34,10 +34,11 @@ func NewSyncer(cfg *config.Config, database *db.DB) (*Syncer, error) {
 	return &Syncer{
 		cfg: cfg,
 		db:  database,
-		client: &http.Client{
-			Timeout:   60 * time.Second,
-			Transport: transport,
-		},
+		// No Timeout: the XML-RPC list_packages_with_serial response is
+		// 50-150 MB and takes several minutes over a slow/proxied link.
+		// ResponseHeaderTimeout on the transport catches stalled connections.
+		// Context cancellation (SIGINT/SIGTERM) handles stuck operations.
+		client: &http.Client{Transport: transport},
 	}, nil
 }
 
