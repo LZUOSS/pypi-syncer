@@ -23,6 +23,10 @@ func Open(repoPath string) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("set journal_mode: %w", err)
 	}
+	if _, err := sqlDB.Exec("PRAGMA busy_timeout=15000"); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	}
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys=ON"); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("set foreign_keys: %w", err)

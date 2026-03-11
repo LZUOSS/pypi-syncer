@@ -129,6 +129,14 @@ func (s *Server) Run(ctx context.Context) error {
 // with prefix+"/simple/" — both would match prefix+"/simple/json".
 func (s *Server) serveCatchAll(w http.ResponseWriter, r *http.Request) {
 	rel := strings.TrimPrefix(r.URL.Path, s.cfg.Prefix+"/")
+
+	// Root info page.
+	if rel == "" {
+		s.ServeRoot(w, r)
+		return
+	}
+
+	// /{pkg}/json endpoint.
 	if strings.HasSuffix(rel, "/json") {
 		pkg := strings.TrimSuffix(rel, "/json")
 		if pkg != "" && !strings.Contains(pkg, "/") {
