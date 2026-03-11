@@ -41,12 +41,20 @@ func (s *Server) ServeRoot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prefix := html.EscapeString(s.cfg.Prefix)
-	host := html.EscapeString(r.Host)
+
+	// Determine the public-facing host. Prefer X-Forwarded-Host (set by
+	// reverse proxies like nginx) over the backend listen address.
+	publicHost := r.Header.Get("X-Forwarded-Host")
+	if publicHost == "" {
+		publicHost = r.Host
+	}
+	host := html.EscapeString(publicHost)
+
 	scheme := "https"
 	if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
 		scheme = "http"
 	}
-	baseURL := scheme + "://" + r.Host
+	baseURL := scheme + "://" + publicHost
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -126,7 +134,7 @@ url = "%s%s/simple/"</pre>
 		time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		html.EscapeString(clientIPStr),
 		modeBadge,
-		html.EscapeString(modeDetail),
+		modeDetail, // already contains trusted HTML (<code>…</code>), do not escape
 		baseURL, prefix,
 		baseURL, prefix,
 		baseURL, prefix,
