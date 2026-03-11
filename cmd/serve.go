@@ -33,7 +33,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	database, err := db.Open(cfg.RepoPath)
+	database, err := db.Open(cfg.Database.DSN)
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}

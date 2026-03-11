@@ -13,6 +13,7 @@ type Config struct {
 	RepoPath string `yaml:"repo_path"`
 	Prefix   string `yaml:"prefix"`
 
+	Database DatabaseConfig `yaml:"database"`
 	Upstream UpstreamConfig `yaml:"upstream"`
 	TLS      TLSConfig      `yaml:"tls"`
 
@@ -25,6 +26,12 @@ type Config struct {
 	Log   LogConfig   `yaml:"log"`
 
 	Timeouts TimeoutsConfig `yaml:"timeouts"`
+}
+
+type DatabaseConfig struct {
+	// DSN is a Go MySQL DSN, e.g.:
+	//   user:pass@tcp(127.0.0.1:3306)/pypi_mirror?parseTime=true&charset=utf8mb4
+	DSN string `yaml:"dsn"`
 }
 
 type UpstreamConfig struct {

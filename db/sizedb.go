@@ -33,7 +33,7 @@ func (d *DB) SetRemoteSize(filePath string, size *int64) error {
 	}
 	_, err := d.sql.Exec(
 		`INSERT INTO remote_sizes(file_path, size, recorded_at) VALUES(?,?,?)
-		 ON CONFLICT(file_path) DO UPDATE SET size=excluded.size, recorded_at=excluded.recorded_at`,
+		 ON DUPLICATE KEY UPDATE size=VALUES(size), recorded_at=VALUES(recorded_at)`,
 		filePath, s, now,
 	)
 	return err
@@ -57,7 +57,7 @@ func (d *DB) GetLocalSize(filePath string) (size int64, tier int, ok bool, err e
 func (d *DB) SetLocalSize(filePath string, size int64, tier int) error {
 	_, err := d.sql.Exec(
 		`INSERT INTO local_sizes(file_path, size, tier) VALUES(?,?,?)
-		 ON CONFLICT(file_path) DO UPDATE SET size=excluded.size, tier=excluded.tier`,
+		 ON DUPLICATE KEY UPDATE size=VALUES(size), tier=VALUES(tier)`,
 		filePath, size, tier,
 	)
 	return err

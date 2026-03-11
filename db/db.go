@@ -3,33 +3,24 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"path/filepath"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type DB struct {
 	sql *sql.DB
 }
 
-func Open(repoPath string) (*DB, error) {
-	dbPath := filepath.Join(repoPath, "pypi-mirror.db")
-	sqlDB, err := sql.Open("sqlite", dbPath)
+// Open connects to the MySQL server using dsn and initialises the schema.
+func Open(dsn string) (*DB, error) {
+	sqlDB, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if err := sqlDB.Ping(); err != nil {
 		sqlDB.Close()
-		return nil, fmt.Errorf("set journal_mode: %w", err)
-	}
-	if _, err := sqlDB.Exec("PRAGMA busy_timeout=15000"); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("set busy_timeout: %w", err)
-	}
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("set foreign_keys: %w", err)
+		return nil, fmt.Errorf("ping db: %w", err)
 	}
 
 	d := &DB{sql: sqlDB}
@@ -49,75 +40,52 @@ func (d *DB) DB() *sql.DB {
 }
 
 func (d *DB) initSchema() error {
-	tx, err := d.sql.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS votes (
-			file_path   TEXT NOT NULL,
-			ip_prefix   TEXT NOT NULL,
-			voted_at    INTEGER NOT NULL,
+			file_path  VARCHAR(512)  NOT NULL,
+			ip_prefix  VARCHAR(64)   NOT NULL,
+			voted_at   BIGINT        NOT NULL,
 			PRIMARY KEY (file_path, ip_prefix, voted_at)
-		)`,
+		) DEFAULT CHARSET=utf8mb4`,
 		`CREATE INDEX IF NOT EXISTS idx_votes_file ON votes(file_path)`,
 		`CREATE INDEX IF NOT EXISTS idx_votes_time ON votes(voted_at)`,
 		`CREATE TABLE IF NOT EXISTS remote_sizes (
-			file_path    TEXT PRIMARY KEY,
-			size         INTEGER,
-			recorded_at  INTEGER NOT NULL
-		)`,
+			file_path    VARCHAR(512) NOT NULL PRIMARY KEY,
+			size         BIGINT,
+			recorded_at  BIGINT       NOT NULL
+		) DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS local_sizes (
-			file_path TEXT PRIMARY KEY,
-			size      INTEGER NOT NULL,
-			tier      INTEGER NOT NULL DEFAULT 0
-		)`,
+			file_path VARCHAR(512) NOT NULL PRIMARY KEY,
+			size      BIGINT       NOT NULL,
+			tier      INT          NOT NULL DEFAULT 0
+		) DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS serials (
-			package_name TEXT PRIMARY KEY,
-			serial       INTEGER NOT NULL
-		)`,
+			package_name VARCHAR(256) NOT NULL PRIMARY KEY,
+			serial       BIGINT       NOT NULL
+		) DEFAULT CHARSET=utf8mb4`,
 	}
 
 	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("exec %q: %w", stmt[:40], err)
+		if _, err := d.sql.Exec(stmt); err != nil {
+			return fmt.Errorf("exec schema: %w", err)
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
 	}
 
 	// Migrate: add tier column to local_sizes if it does not exist yet.
-	// This handles databases created before the multi-tier feature was added.
-	rows, err := d.sql.Query("PRAGMA table_info(local_sizes)")
+	var count int
+	err := d.sql.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_NAME   = 'local_sizes'
+		  AND COLUMN_NAME  = 'tier'`,
+	).Scan(&count)
 	if err != nil {
-		return fmt.Errorf("pragma table_info: %w", err)
+		return fmt.Errorf("check tier column: %w", err)
 	}
-	hasTier := false
-	for rows.Next() {
-		var cid int
-		var name, colType string
-		var notNull int
-		var dflt sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan table_info: %w", err)
-		}
-		if name == "tier" {
-			hasTier = true
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("table_info rows: %w", err)
-	}
-
-	if !hasTier {
-		if _, err := d.sql.Exec("ALTER TABLE local_sizes ADD COLUMN tier INTEGER NOT NULL DEFAULT 0"); err != nil {
+	if count == 0 {
+		if _, err := d.sql.Exec(
+			"ALTER TABLE local_sizes ADD COLUMN tier INT NOT NULL DEFAULT 0",
+		); err != nil {
 			return fmt.Errorf("add tier column: %w", err)
 		}
 	}

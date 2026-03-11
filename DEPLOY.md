@@ -2,6 +2,29 @@
 
 This guide covers production deployment of `pypi-mirror` on a systemd-based Linux system.
 
+## MySQL / MariaDB Setup
+
+pypi-mirror stores all state (votes, package serials, cached file sizes) in
+MySQL/MariaDB. Both the `serve` and `sync` processes connect to the same
+database concurrently; MySQL handles this natively.
+
+```sql
+-- Run as MySQL root
+CREATE DATABASE pypi_mirror DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'mirror'@'localhost' IDENTIFIED BY 'changeme';
+GRANT ALL PRIVILEGES ON pypi_mirror.* TO 'mirror'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+Set the DSN in `config.yaml`:
+
+```yaml
+database:
+  dsn: "mirror:changeme@tcp(127.0.0.1:3306)/pypi_mirror?parseTime=true&charset=utf8mb4"
+```
+
+The schema is created automatically on first startup.
+
 ## Directory and User Setup
 
 ```sh

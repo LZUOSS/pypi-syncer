@@ -1,6 +1,7 @@
 [Unit]
 Description=PyPI mirror index and cache sync
-After=network.target
+After=network.target mariadb.service mysql.service
+Wants=mariadb.service mysql.service
 
 [Service]
 Type=oneshot

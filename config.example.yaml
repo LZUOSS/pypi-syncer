@@ -11,6 +11,12 @@ listen: ":8080"
 #   {repo_path}/pypi-mirror.db - SQLite database
 repo_path: "/srv/repo/pypi"
 
+# MySQL / MariaDB connection.
+# DSN format: user:password@tcp(host:port)/dbname?parseTime=true&charset=utf8mb4
+# Create the database first: CREATE DATABASE pypi_mirror DEFAULT CHARSET utf8mb4;
+database:
+  dsn: "mirror:changeme@tcp(127.0.0.1:3306)/pypi_mirror?parseTime=true&charset=utf8mb4"
+
 # URL path prefix for all endpoints.
 # Clients pip-install with: index-url = https://your-host/pypi/simple/
 prefix: "/pypi"

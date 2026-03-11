@@ -20,7 +20,7 @@ func (d *DB) GetSerial(packageName string) (serial int64, ok bool, err error) {
 func (d *DB) SetSerial(packageName string, serial int64) error {
 	_, err := d.sql.Exec(
 		`INSERT INTO serials(package_name, serial) VALUES(?,?)
-		 ON CONFLICT(package_name) DO UPDATE SET serial=excluded.serial`,
+		 ON DUPLICATE KEY UPDATE serial=VALUES(serial)`,
 		packageName, serial,
 	)
 	return err
