@@ -39,26 +39,34 @@ func (d *DB) SetRemoteSize(filePath string, size *int64) error {
 	return err
 }
 
-// GetLocalSize returns the cached local file size.
-func (d *DB) GetLocalSize(filePath string) (size int64, ok bool, err error) {
+// GetLocalSize returns the cached local file size and tier index.
+func (d *DB) GetLocalSize(filePath string) (size int64, tier int, ok bool, err error) {
 	err = d.sql.QueryRow(
-		"SELECT size FROM local_sizes WHERE file_path=?", filePath,
-	).Scan(&size)
+		"SELECT size, tier FROM local_sizes WHERE file_path=?", filePath,
+	).Scan(&size, &tier)
 	if err == sql.ErrNoRows {
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	if err != nil {
-		return 0, false, err
+		return 0, 0, false, err
 	}
-	return size, true, nil
+	return size, tier, true, nil
 }
 
-// SetLocalSize stores a local file size.
-func (d *DB) SetLocalSize(filePath string, size int64) error {
+// SetLocalSize stores a local file size and tier index.
+func (d *DB) SetLocalSize(filePath string, size int64, tier int) error {
 	_, err := d.sql.Exec(
-		`INSERT INTO local_sizes(file_path, size) VALUES(?,?)
-		 ON CONFLICT(file_path) DO UPDATE SET size=excluded.size`,
-		filePath, size,
+		`INSERT INTO local_sizes(file_path, size, tier) VALUES(?,?,?)
+		 ON CONFLICT(file_path) DO UPDATE SET size=excluded.size, tier=excluded.tier`,
+		filePath, size, tier,
+	)
+	return err
+}
+
+// UpdateLocalSizeTier updates only the tier for an existing local_sizes entry.
+func (d *DB) UpdateLocalSizeTier(filePath string, newTier int) error {
+	_, err := d.sql.Exec(
+		"UPDATE local_sizes SET tier=? WHERE file_path=?", newTier, filePath,
 	)
 	return err
 }

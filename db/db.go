@@ -67,7 +67,8 @@ func (d *DB) initSchema() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS local_sizes (
 			file_path TEXT PRIMARY KEY,
-			size      INTEGER NOT NULL
+			size      INTEGER NOT NULL,
+			tier      INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS serials (
 			package_name TEXT PRIMARY KEY,
@@ -81,5 +82,41 @@ func (d *DB) initSchema() error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Migrate: add tier column to local_sizes if it does not exist yet.
+	// This handles databases created before the multi-tier feature was added.
+	rows, err := d.sql.Query("PRAGMA table_info(local_sizes)")
+	if err != nil {
+		return fmt.Errorf("pragma table_info: %w", err)
+	}
+	hasTier := false
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan table_info: %w", err)
+		}
+		if name == "tier" {
+			hasTier = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("table_info rows: %w", err)
+	}
+
+	if !hasTier {
+		if _, err := d.sql.Exec("ALTER TABLE local_sizes ADD COLUMN tier INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("add tier column: %w", err)
+		}
+	}
+
+	return nil
 }

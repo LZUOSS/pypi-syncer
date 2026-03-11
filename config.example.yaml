@@ -31,6 +31,12 @@ upstream:
   # files endpoint or a CDN).
   # redirect_url: "https://files.pythonhosted.org/packages/"
 
+  # HTTP/HTTPS/SOCKS5 proxy for all outbound requests (sync downloads,
+  # HEAD requests, and reverse-proxy to upstream). Leave unset to use
+  # a direct connection.
+  # Supported schemes: http://, https://, socks5://
+  # proxy: "socks5://127.0.0.1:1080"
+
 # TLS termination (optional).
 # Omit this section to use plain HTTP (e.g. when terminating TLS at nginx).
 # tls:
@@ -64,7 +70,19 @@ ip_modes:
 cache:
   # Maximum total size of locally stored package files.
   # Accepts suffixes: k, m, g, t (case-insensitive).
+  # This single-tier limit is used when `tiers` is not configured.
   size_limit: "512g"
+
+  # Multi-tier cache (optional). When configured, `size_limit` above is
+  # ignored and each tier uses its own limit.
+  # Files are assigned to the hottest (first) tier that has capacity.
+  # When a file is evicted from the last tier it is deleted.
+  # Use absolute paths. Each path must exist before running.
+  # tiers:
+  #   - path: "/mnt/ssd/pypi/packages"
+  #     size_limit: "100g"
+  #   - path: "/mnt/hdd/pypi/packages"
+  #     size_limit: "2t"
 
   # Files larger than this are never downloaded into the cache.
   filesize_limit: "4g"

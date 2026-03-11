@@ -21,7 +21,8 @@ var hopByHop = map[string]bool{
 
 // ReverseProxy forwards r to targetURL and writes the response to w.
 // It strips hop-by-hop headers and streams the response body.
-func ReverseProxy(w http.ResponseWriter, r *http.Request, targetURL string, timeout time.Duration) error {
+// client is used to make the upstream request; pass nil to use http.DefaultClient.
+func ReverseProxy(w http.ResponseWriter, r *http.Request, targetURL string, timeout time.Duration, client *http.Client) error {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
@@ -40,7 +41,10 @@ func ReverseProxy(w http.ResponseWriter, r *http.Request, targetURL string, time
 		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

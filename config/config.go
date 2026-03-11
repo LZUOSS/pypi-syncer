@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -30,6 +31,7 @@ type UpstreamConfig struct {
 	PypiURL     string `yaml:"pypi_url"`
 	PackagesURL string `yaml:"packages_url"`
 	RedirectURL string `yaml:"redirect_url"`
+	Proxy       string `yaml:"proxy"`
 }
 
 type TLSConfig struct {
@@ -47,13 +49,19 @@ type IPModeRule struct {
 	Mode string `yaml:"mode"`
 }
 
+type CacheTier struct {
+	Path      string    `yaml:"path"`
+	SizeLimit HumanSize `yaml:"size_limit"`
+}
+
 type CacheConfig struct {
-	SizeLimit      HumanSize `yaml:"size_limit"`
-	FilesizeLimit  HumanSize `yaml:"filesize_limit"`
-	MinVoteCount   int       `yaml:"min_vote_count"`
-	VoteWindow     string    `yaml:"vote_window"`
-	DedupWindow    string    `yaml:"dedup_window"`
-	SizeDBTTL      string    `yaml:"size_db_ttl"`
+	SizeLimit     HumanSize   `yaml:"size_limit"`
+	FilesizeLimit HumanSize   `yaml:"filesize_limit"`
+	MinVoteCount  int         `yaml:"min_vote_count"`
+	VoteWindow    string      `yaml:"vote_window"`
+	DedupWindow   string      `yaml:"dedup_window"`
+	SizeDBTTL     string      `yaml:"size_db_ttl"`
+	Tiers         []CacheTier `yaml:"tiers"`
 }
 
 type SyncConfig struct {
@@ -87,6 +95,21 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.applyDefaults()
 	return cfg, nil
+}
+
+// EffectiveTiers returns the configured cache tiers. If no tiers are
+// explicitly configured, it synthesizes a single tier from RepoPath and
+// cache.size_limit for backward compatibility.
+func (c *Config) EffectiveTiers() []CacheTier {
+	if len(c.Cache.Tiers) > 0 {
+		return c.Cache.Tiers
+	}
+	return []CacheTier{
+		{
+			Path:      filepath.Join(c.RepoPath, "packages"),
+			SizeLimit: c.Cache.SizeLimit,
+		},
+	}
 }
 
 func (c *Config) applyDefaults() {

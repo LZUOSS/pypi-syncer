@@ -20,6 +20,28 @@ install -m 0755 pypi-mirror /usr/local/bin/pypi-mirror
 install -m 0640 -o root -g mirror config.yaml /etc/pypi-mirror/config.yaml
 ```
 
+### Multi-tier cache directories
+
+If you configure `cache.tiers`, create each tier directory before starting:
+
+```sh
+install -d -m 0755 -o mirror -g mirror /mnt/ssd/pypi/packages
+install -d -m 0755 -o mirror -g mirror /mnt/hdd/pypi/packages
+```
+
+Also add the tier paths to `ReadWritePaths` in the systemd service units (see below).
+
+### Upstream proxy
+
+If pypi-mirror needs to reach upstream PyPI or the packages mirror through an HTTP/HTTPS/SOCKS5 proxy, set `upstream.proxy` in `config.yaml`:
+
+```yaml
+upstream:
+  proxy: "socks5://127.0.0.1:1080"
+```
+
+This applies to all outbound connections: index sync, HEAD size-resolution requests, and server-side reverse-proxy requests (when `ip_modes` is `"proxy"`).
+
 Relevant `config.yaml` settings for this layout:
 
 ```yaml
@@ -54,6 +76,7 @@ ExecReload=/bin/kill -USR1 $MAINPID
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+# Add any cache.tiers paths here if using multi-tier cache
 ReadWritePaths=/srv/repo/pypi /var/log/pypi-mirror
 
 [Install]
@@ -81,6 +104,7 @@ ExecStart=/usr/local/bin/pypi-mirror sync -c /etc/pypi-mirror/config.yaml
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+# Add any cache.tiers paths here if using multi-tier cache
 ReadWritePaths=/srv/repo/pypi
 ```
 

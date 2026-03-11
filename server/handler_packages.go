@@ -54,11 +54,12 @@ func (s *Server) ServePackages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	localPath := filepath.Join(s.cfg.RepoPath, "packages", pkgPath)
-	if _, err := os.Stat(localPath); err == nil {
-		// File exists locally.
-		http.ServeFile(w, r, localPath)
-		return
+	for _, tier := range s.tiers {
+		localPath := filepath.Join(tier.Path, pkgPath)
+		if _, err := os.Stat(localPath); err == nil {
+			http.ServeFile(w, r, localPath)
+			return
+		}
 	}
 
 	// File not cached locally; proxy or redirect to upstream.
@@ -71,7 +72,7 @@ func (s *Server) ServePackages(w http.ResponseWriter, r *http.Request) {
 	if mode == "proxy" {
 		proxyURL := strings.TrimSuffix(s.cfg.Upstream.PackagesURL, "/") + "/" + pkgPath
 		upstreamTimeout := parseDuration(s.cfg.Timeouts.Upstream)
-		if err := ReverseProxy(w, r, proxyURL, upstreamTimeout); err != nil {
+		if err := ReverseProxy(w, r, proxyURL, upstreamTimeout, s.upstreamClient); err != nil {
 			http.Error(w, "upstream error", http.StatusBadGateway)
 		}
 	} else {

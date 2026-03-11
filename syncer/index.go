@@ -26,14 +26,19 @@ type Syncer struct {
 }
 
 // NewSyncer creates a new Syncer.
-func NewSyncer(cfg *config.Config, database *db.DB) *Syncer {
+func NewSyncer(cfg *config.Config, database *db.DB) (*Syncer, error) {
+	transport, err := config.NewTransport(cfg.Upstream.Proxy)
+	if err != nil {
+		return nil, fmt.Errorf("create transport: %w", err)
+	}
 	return &Syncer{
 		cfg: cfg,
 		db:  database,
 		client: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout:   60 * time.Second,
+			Transport: transport,
 		},
-	}
+	}, nil
 }
 
 // SyncIndex synchronizes the local index with the upstream PyPI.

@@ -1,14 +1,15 @@
 package syncer
 
 import (
-	"container/heap"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,17 +23,29 @@ type CacheManager struct {
 	cfg        *config.Config
 	db         *db.DB
 	downloader *Downloader
+	tiers      []config.CacheTier
 }
 
 // NewCacheManager creates a new CacheManager.
-func NewCacheManager(cfg *config.Config, database *db.DB) *CacheManager {
-	client := &http.Client{Timeout: 60 * time.Second}
+func NewCacheManager(cfg *config.Config, database *db.DB) (*CacheManager, error) {
+	transport, err := config.NewTransport(cfg.Upstream.Proxy)
+	if err != nil {
+		return nil, fmt.Errorf("create transport: %w", err)
+	}
+	client := &http.Client{Timeout: 60 * time.Second, Transport: transport}
 	dl := NewDownloader(client, cfg.Sync.UserAgent, cfg.Sync.Retry)
 	return &CacheManager{
 		cfg:        cfg,
 		db:         database,
 		downloader: dl,
-	}
+		tiers:      cfg.EffectiveTiers(),
+	}, nil
+}
+
+// localFile holds information about a locally cached file.
+type localFile struct {
+	size int64
+	tier int
 }
 
 // Run executes all cache management phases A-E.
@@ -90,87 +103,112 @@ func (cm *CacheManager) Run(ctx context.Context) error {
 
 	// Phase C: Score all files
 	log.Println("[cache] Phase C: scoring files")
-	var downloadHeap maxScoreHeap
-	var evictHeap minScoreHeap
 
-	for path, size := range inventory {
-		votes := popularMap[path] // 0 if not popular
-		sc := scoreFile(votes, size)
-		evictHeap = append(evictHeap, scoredFile{path: path, size: size, score: sc, local: true})
+	type candidateFile struct {
+		path  string
+		size  int64
+		score float64
+		local bool
+		tier  int // current tier (for local files)
+	}
+
+	var all []candidateFile
+	for path, lf := range inventory {
+		votes := popularMap[path]
+		sc := scoreFile(votes, lf.size)
+		all = append(all, candidateFile{path: path, size: lf.size, score: sc, local: true, tier: lf.tier})
 	}
 	for _, mf := range missingFiles {
 		votes := popularMap[mf.path]
 		sc := scoreFile(votes, mf.size)
-		downloadHeap = append(downloadHeap, scoredFile{path: mf.path, size: mf.size, score: sc, local: false})
+		all = append(all, candidateFile{path: mf.path, size: mf.size, score: sc, local: false, tier: -1})
 	}
 
-	heap.Init(&downloadHeap)
-	heap.Init(&evictHeap)
+	// Phase D: Two-pass assignment + execution
+	log.Println("[cache] Phase D: assigning files to tiers and executing")
 
-	// Phase D: Download/evict
-	log.Println("[cache] Phase D: downloading and evicting")
-	var currentSize int64
-	for _, size := range inventory {
-		currentSize += size
+	// Sort descending by score
+	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+
+	// Assignment pass: assign each file to the hottest tier with remaining capacity
+	remaining := make([]int64, len(cm.tiers))
+	for i, t := range cm.tiers {
+		remaining[i] = t.SizeLimit.Bytes()
 	}
-	sizeLimit := cm.cfg.Cache.SizeLimit.Bytes()
-	downloadErrors := 0
+
+	type assignment struct {
+		candidateFile
+		assignedTier int // -1 = evict/skip
+	}
+
+	assignments := make([]assignment, len(all))
+	for i, c := range all {
+		assigned := -1
+		for t := 0; t < len(cm.tiers); t++ {
+			if remaining[t] >= c.size {
+				remaining[t] -= c.size
+				assigned = t
+				break
+			}
+		}
+		assignments[i] = assignment{candidateFile: c, assignedTier: assigned}
+	}
+
 	packagesURL := strings.TrimRight(cm.cfg.Upstream.PackagesURL, "/")
+	downloadErrors := 0
 
-	for downloadHeap.Len() > 0 {
+	// Execution pass
+	for _, a := range assignments {
 		if downloadErrors >= cm.cfg.Sync.DownloadErrorThreshold {
 			log.Printf("[cache] Phase D: stopping, reached %d download errors", downloadErrors)
 			break
 		}
 
-		candidate := heap.Pop(&downloadHeap).(scoredFile)
-
-		if currentSize+candidate.size <= sizeLimit {
-			// Fits without eviction
-			if err := cm.downloadFile(ctx, packagesURL, candidate.path, candidate.size, inventory); err != nil {
-				log.Printf("[cache] Phase D: download error %s: %v", candidate.path, err)
-				downloadErrors++
-				continue
+		if a.assignedTier == -1 {
+			// Evict or skip
+			if a.local {
+				srcPath := cm.tierFilePath(a.tier, a.path)
+				if err := os.Remove(srcPath); err != nil && !os.IsNotExist(err) {
+					log.Printf("[cache] Phase D: evict error %s: %v", a.path, err)
+				}
+				cm.db.DeleteLocalSize(a.path)
+				delete(inventory, a.path)
+				log.Printf("[cache] Phase D: evicted %s (score=%.4f)", a.path, a.score)
 			}
-			currentSize += candidate.size
 			continue
 		}
 
-		// Try evicting
-		fitted := false
-		for evictHeap.Len() > 0 {
-			evictCandidate := evictHeap[0] // peek
-			if evictCandidate.score >= candidate.score {
-				break // no point evicting higher-scored files
+		if !a.local {
+			// Download to assigned tier
+			destPath := cm.tierFilePath(a.assignedTier, a.path)
+			url := packagesURL + "/" + a.path
+			if err := cm.downloader.Download(ctx, url, destPath); err != nil {
+				log.Printf("[cache] Phase D: download error %s: %v", a.path, err)
+				downloadErrors++
+				continue
 			}
-			if currentSize+candidate.size-evictCandidate.size <= sizeLimit {
-				// Evict this file
-				evicted := heap.Pop(&evictHeap).(scoredFile)
-				evictPath := filepath.Join(cm.cfg.RepoPath, "packages", evicted.path)
-				if err := os.Remove(evictPath); err != nil && !os.IsNotExist(err) {
-					log.Printf("[cache] Phase D: evict error %s: %v", evicted.path, err)
-				}
-				cm.db.DeleteLocalSize(evicted.path)
-				delete(inventory, evicted.path)
-				currentSize -= evicted.size
-				log.Printf("[cache] Phase D: evicted %s (score=%.4f)", evicted.path, evicted.score)
+			inventory[a.path] = localFile{size: a.size, tier: a.assignedTier}
+			cm.db.SetLocalSize(a.path, a.size, a.assignedTier)
+			log.Printf("[cache] Phase D: downloaded %s to tier %d (%d bytes)", a.path, a.assignedTier, a.size)
+			continue
+		}
 
-				// Now download
-				if err := cm.downloadFile(ctx, packagesURL, candidate.path, candidate.size, inventory); err != nil {
-					log.Printf("[cache] Phase D: download error %s: %v", candidate.path, err)
-					downloadErrors++
-				} else {
-					currentSize += candidate.size
-				}
-				fitted = true
-				break
-			}
-			// Can't fit even with this eviction, try next
-			heap.Pop(&evictHeap)
+		// Local file
+		if a.tier == a.assignedTier {
+			// No-op
+			continue
 		}
-		if !fitted {
-			break // no more downloads possible
+
+		// Needs promotion or demotion
+		srcPath := cm.tierFilePath(a.tier, a.path)
+		dstPath := cm.tierFilePath(a.assignedTier, a.path)
+		if err := moveFile(srcPath, dstPath); err != nil {
+			log.Printf("[cache] Phase D: move error %s tier %d->%d: %v", a.path, a.tier, a.assignedTier, err)
+			continue
 		}
+		inventory[a.path] = localFile{size: a.size, tier: a.assignedTier}
+		cm.db.UpdateLocalSizeTier(a.path, a.assignedTier)
+		log.Printf("[cache] Phase D: moved %s tier %d->%d", a.path, a.tier, a.assignedTier)
 	}
 
 	// Phase E: Cleanup
@@ -193,46 +231,58 @@ func (cm *CacheManager) Run(ctx context.Context) error {
 	return nil
 }
 
-func (cm *CacheManager) inventoryLocal() (map[string]int64, error) {
-	inventory := make(map[string]int64)
-	packagesDir := filepath.Join(cm.cfg.RepoPath, "packages")
+// tierFilePath returns the absolute path for a file in a given tier.
+func (cm *CacheManager) tierFilePath(tierIdx int, relPath string) string {
+	return filepath.Join(cm.tiers[tierIdx].Path, relPath)
+}
 
-	err := filepath.WalkDir(packagesDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
+func (cm *CacheManager) inventoryLocal() (map[string]localFile, error) {
+	inventory := make(map[string]localFile)
+
+	for tierIdx, tier := range cm.tiers {
+		err := filepath.WalkDir(tier.Path, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			relPath, err := filepath.Rel(tier.Path, path)
+			if err != nil {
+				return err
+			}
+
+			// If already found in a hotter tier, skip (prefer hotter tier entry)
+			if _, exists := inventory[relPath]; exists {
+				return nil
+			}
+
+			size, dbTier, ok, dbErr := cm.db.GetLocalSize(relPath)
+			if dbErr != nil {
+				return dbErr
+			}
+			if ok {
+				inventory[relPath] = localFile{size: size, tier: dbTier}
+				return nil
+			}
+
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			size = info.Size()
+			if err := cm.db.SetLocalSize(relPath, size, tierIdx); err != nil {
+				return err
+			}
+			inventory[relPath] = localFile{size: size, tier: tierIdx}
 			return nil
-		}
-		relPath, err := filepath.Rel(packagesDir, path)
-		if err != nil {
-			return err
-		}
+		})
 
-		size, ok, dbErr := cm.db.GetLocalSize(relPath)
-		if dbErr != nil {
-			return dbErr
+		if err != nil && !os.IsNotExist(err) {
+			log.Printf("[cache] Phase A: walk error for tier %d (%s): %v", tierIdx, tier.Path, err)
 		}
-		if ok {
-			inventory[relPath] = size
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		size = info.Size()
-		if err := cm.db.SetLocalSize(relPath, size); err != nil {
-			return err
-		}
-		inventory[relPath] = size
-		return nil
-	})
-
-	if err != nil && !os.IsNotExist(err) {
-		return inventory, nil // return what we have
 	}
+
 	return inventory, nil
 }
 
@@ -259,16 +309,45 @@ func (cm *CacheManager) resolveRemoteSize(ctx context.Context, filePath string) 
 	return &remoteSize, nil
 }
 
-func (cm *CacheManager) downloadFile(ctx context.Context, packagesURL, filePath string, size int64, inventory map[string]int64) error {
-	url := packagesURL + "/" + filePath
-	destPath := filepath.Join(cm.cfg.RepoPath, "packages", filePath)
-	if err := cm.downloader.Download(ctx, url, destPath); err != nil {
+// moveFile moves src to dst, trying os.Rename first and falling back to
+// copy+delete if they are on different filesystems.
+func moveFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	// Rename failed (possibly cross-device); fall back to copy+delete.
+	if err := copyFile(src, dst); err != nil {
+		return fmt.Errorf("copy: %w", err)
+	}
+	if err := os.Remove(src); err != nil {
+		return fmt.Errorf("remove src after copy: %w", err)
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
 		return err
 	}
-	inventory[filePath] = size
-	cm.db.SetLocalSize(filePath, size)
-	log.Printf("[cache] Phase D: downloaded %s (%d bytes)", filePath, size)
-	return nil
+	defer in.Close()
+
+	out, err := os.CreateTemp(filepath.Dir(dst), ".tmp-")
+	if err != nil {
+		return err
+	}
+	tmpName := out.Name()
+
+	_, err = io.Copy(out, in)
+	out.Close()
+	if err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, dst)
 }
 
 func scoreFile(voteCount int, size int64) float64 {
@@ -289,42 +368,4 @@ func parseDuration(s string) (time.Duration, error) {
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	return time.ParseDuration(s)
-}
-
-// scoredFile holds a file with its score for heap operations.
-type scoredFile struct {
-	path  string
-	size  int64
-	score float64
-	local bool
-}
-
-// maxScoreHeap is a max-heap of scoredFile (pop = highest score).
-type maxScoreHeap []scoredFile
-
-func (h maxScoreHeap) Len() int            { return len(h) }
-func (h maxScoreHeap) Less(i, j int) bool   { return h[i].score > h[j].score }
-func (h maxScoreHeap) Swap(i, j int)        { h[i], h[j] = h[j], h[i] }
-func (h *maxScoreHeap) Push(x interface{})  { *h = append(*h, x.(scoredFile)) }
-func (h *maxScoreHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[:n-1]
-	return item
-}
-
-// minScoreHeap is a min-heap of scoredFile (pop = lowest score).
-type minScoreHeap []scoredFile
-
-func (h minScoreHeap) Len() int            { return len(h) }
-func (h minScoreHeap) Less(i, j int) bool   { return h[i].score < h[j].score }
-func (h minScoreHeap) Swap(i, j int)        { h[i], h[j] = h[j], h[i] }
-func (h *minScoreHeap) Push(x interface{})  { *h = append(*h, x.(scoredFile)) }
-func (h *minScoreHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[:n-1]
-	return item
 }

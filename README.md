@@ -96,6 +96,7 @@ All configuration is in YAML. Duration values accept Go duration syntax (`30s`, 
 | `pypi_url` | string | `"https://pypi.org"` | Base URL for PyPI index and JSON API |
 | `packages_url` | string | _(required)_ | Base URL for package files — used by the sync downloader and proxy-mode requests |
 | `redirect_url` | string | _(same as `packages_url`)_ | Base URL clients are redirected to in `"302"` mode. Set when the redirect target should differ from the internal download source (e.g. a CDN or the canonical `files.pythonhosted.org`) |
+| `proxy` | string | — | HTTP/HTTPS/SOCKS5 proxy for all outbound requests (sync downloads, HEAD requests, and server-side upstream proxy). Supports `http://`, `https://`, and `socks5://` URLs. Leave unset for a direct connection. |
 
 ### `tls`
 
@@ -132,14 +133,37 @@ In `"302"` mode the client is redirected to `packages_url`. In `"proxy"` mode th
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `size_limit` | size | — | Maximum total size of locally cached packages (e.g. `"512g"`, `"1t"`) |
+| `size_limit` | size | — | Maximum total size of locally cached packages when `tiers` is not set (e.g. `"512g"`, `"1t"`) |
 | `filesize_limit` | size | — | Files larger than this are never downloaded (e.g. `"4g"`) |
 | `min_vote_count` | int | `2` | Minimum vote count within the vote window for a file to be considered for download |
 | `vote_window` | duration | `"7d"` | Rolling window over which votes are counted |
 | `dedup_window` | duration | `"5m"` | Votes from the same IP prefix within this window count only once per file |
 | `size_db_ttl` | duration | `"2d"` | TTL for cached remote file size records |
+| `tiers` | list | — | Multi-tier cache configuration (see below). When set, `size_limit` is ignored. |
 
 Size values accept suffixes: `k`/`kb`, `m`/`mb`, `g`/`gb`, `t`/`tb` (case-insensitive).
+
+#### `cache.tiers` (optional)
+
+A list of cache tiers ordered from hottest (tier 0, typically SSD) to coldest (last tier, typically HDD). Files are assigned to the hottest tier with remaining capacity; files that do not fit in any tier are deleted.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `path` | string | Absolute path to the directory for this tier. Must be created before running. |
+| `size_limit` | size | Maximum total size for this tier. |
+
+Example:
+
+```yaml
+cache:
+  tiers:
+    - path: "/mnt/ssd/pypi/packages"
+      size_limit: "100g"
+    - path: "/mnt/hdd/pypi/packages"
+      size_limit: "2t"
+```
+
+When tiers are on different filesystems, file promotion/demotion falls back to a copy+delete operation automatically.
 
 ### `sync`
 
@@ -178,11 +202,13 @@ Size values accept suffixes: `k`/`kb`, `m`/`mb`, `g`/`gb`, `t`/`tb` (case-insens
       index.v1.json     # Per-package simple page (JSON)
   json/
     {pkg-name}          # Raw PyPI JSON metadata (from /pypi/{pkg}/json)
-  packages/
+  packages/             # Default single-tier cache (when cache.tiers is not set)
     {ab}/{abcd…}/       # Package files, mirroring PyPI's layout
       {filename}
   pypi-mirror.db        # SQLite database
 ```
+
+When `cache.tiers` is configured, each tier has its own directory (e.g. `/mnt/ssd/pypi/packages/`). The `{repo_path}/packages/` directory is not used in that case.
 
 ## Architecture
 
@@ -236,7 +262,7 @@ When a client downloads a package file from `{prefix}/packages/…`:
 Runs in five phases each time `sync` is invoked:
 
 **Phase A — Inventory**
-Walk `packages/` and record the size of each local file in the `local_sizes` table (cached to avoid repeated `stat` calls).
+Walk each tier's directory and record the size and tier index of each local file in the `local_sizes` table (cached to avoid repeated `stat` calls). For single-tier configs (no `tiers` key), this is equivalent to walking `{repo_path}/packages/`.
 
 **Phase B — Resolve remote sizes**
 Query the `votes` table for files with at least `min_vote_count` unique IP-prefix votes in the last `vote_window`. For popular files not present locally, issue a HEAD request to `packages_url` to determine their size. Results are cached in `remote_sizes` for `size_db_ttl`. Files larger than `filesize_limit` are excluded.
@@ -248,13 +274,19 @@ Score every file (local and popular-but-missing) using:
 score = voteCount / (max(size, 2 GiB) + 1) * 1048576
 ```
 
-Higher score = more popular relative to size. Local files go into a min-heap (eviction candidates); missing popular files go into a max-heap (download candidates).
+Higher score = more popular relative to size.
 
-**Phase D — Download and evict**
-Process the download heap from highest to lowest score:
-- If the file fits within `size_limit` without eviction, download it immediately.
-- Otherwise, evict the lowest-scored local file (only if its score is less than the download candidate's score) and then download.
-- Stop if `download_error_threshold` consecutive download errors occur.
+**Phase D — Assign and execute (two passes)**
+
+*Assignment pass:* Sort all files by score descending. Walk the sorted list and assign each file to the hottest (first) tier with remaining capacity. Files that do not fit in any tier are marked for deletion.
+
+*Execution pass:* For each file:
+- Remote + assigned → download to the target tier directory.
+- Local + correct tier → no-op.
+- Local + needs promotion/demotion → move to the assigned tier (`os.Rename`; falls back to copy+delete across filesystems).
+- Local + no assignment → delete from disk and DB.
+
+Stop downloading if `download_error_threshold` errors occur.
 
 **Phase E — Cleanup**
 Delete votes older than `vote_window`, expire `remote_sizes` records older than `size_db_ttl`, and remove `local_sizes` entries for files no longer on disk.

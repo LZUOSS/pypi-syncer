@@ -54,7 +54,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// Phase 1: Index sync
 	log.Println("starting index sync...")
-	s := syncer.NewSyncer(cfg, database)
+	s, err := syncer.NewSyncer(cfg, database)
+	if err != nil {
+		return fmt.Errorf("create syncer: %w", err)
+	}
 	if err := s.SyncIndex(ctx); err != nil {
 		return fmt.Errorf("index sync: %w", err)
 	}
@@ -62,7 +65,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// Phase 2: Cache management
 	log.Println("starting cache management...")
-	cm := syncer.NewCacheManager(cfg, database)
+	cm, err := syncer.NewCacheManager(cfg, database)
+	if err != nil {
+		return fmt.Errorf("create cache manager: %w", err)
+	}
 	if err := cm.Run(ctx); err != nil {
 		return fmt.Errorf("cache management: %w", err)
 	}

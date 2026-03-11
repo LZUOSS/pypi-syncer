@@ -29,6 +29,8 @@ type Server struct {
 	ipMatcher      *IPMatcher
 	trustedProxies []*net.IPNet
 	voteCh         chan voteRequest
+	upstreamClient *http.Client
+	tiers          []config.CacheTier
 }
 
 // New creates a new Server.
@@ -43,6 +45,12 @@ func New(cfg *config.Config, database *db.DB, logger *logging.AccessLogger) (*Se
 		return nil, fmt.Errorf("create IP matcher: %w", err)
 	}
 
+	transport, err := config.NewTransport(cfg.Upstream.Proxy)
+	if err != nil {
+		return nil, fmt.Errorf("create upstream transport: %w", err)
+	}
+	upstreamClient := &http.Client{Transport: transport}
+
 	return &Server{
 		cfg:            cfg,
 		db:             database,
@@ -50,6 +58,8 @@ func New(cfg *config.Config, database *db.DB, logger *logging.AccessLogger) (*Se
 		ipMatcher:      matcher,
 		trustedProxies: proxies,
 		voteCh:         make(chan voteRequest, 1000),
+		upstreamClient: upstreamClient,
+		tiers:          cfg.EffectiveTiers(),
 	}, nil
 }
 
