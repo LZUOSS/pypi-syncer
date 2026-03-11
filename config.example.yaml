@@ -1,0 +1,54 @@
+listen: ":8080"
+repo_path: "/srv/repo/pypi"
+prefix: "/pypi"
+
+upstream:
+  pypi_url: "https://pypi.org"
+  packages_url: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/"
+
+# TLS (optional)
+# tls:
+#   cert: "/path/to/cert.pem"
+#   key: "/path/to/key.pem"
+
+# Trusted proxy headers
+trusted_proxies:
+  - "10.0.0.0/8"
+  - "172.16.0.0/12"
+  - "127.0.0.0/8"
+
+# IP-based mode for package fallback
+ip_modes:
+  default: "302"
+  rules:
+    - cidr: "202.38.64.0/19"
+      mode: "proxy"
+    - cidr: "2001:da8:d800::/48"
+      mode: "proxy"
+
+# Cache management
+cache:
+  size_limit: "512g"
+  filesize_limit: "4g"
+  min_vote_count: 2
+  vote_window: "7d"
+  dedup_window: "5m"
+  size_db_ttl: "2d"
+
+# Sync settings
+sync:
+  retry: 3
+  download_error_threshold: 5
+  user_agent: "pypi-mirror/1.0"
+  concurrent_downloads: 4
+
+# Logging (SIGUSR1 to reopen)
+log:
+  path: "/var/log/pypi-mirror/access.log"
+  format: "mirror-json"   # or "combined"
+
+timeouts:
+  read: 30s
+  write: 120s
+  idle: 60s
+  upstream: 60s
