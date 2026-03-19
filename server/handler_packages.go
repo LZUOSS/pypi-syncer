@@ -4,7 +4,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+)
+
+var (
+	reHex2 = regexp.MustCompile(`^[0-9a-f]{2}$`)
+	reHash = regexp.MustCompile(`^[0-9a-f]{60,64}$`)
+	reFile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*\.(whl|tar\.gz|zip|egg|tar\.bz2)$`)
 )
 
 // botUAs contains User-Agent substrings for bots whose downloads
@@ -35,9 +42,13 @@ func (s *Server) ServePackages(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Validate path shape: {2-char-hex}/{2-char-hex}/{hex-hash}/{filename}
+	// Validate path shape and content: {2-char-hex}/{2-char-hex}/{hex-hash}/{filename}
 	parts := strings.Split(pkgPath, "/")
-	if len(parts) != 4 {
+	if len(parts) != 4 ||
+		!reHex2.MatchString(parts[0]) ||
+		!reHex2.MatchString(parts[1]) ||
+		!reHash.MatchString(parts[2]) ||
+		!reFile.MatchString(parts[3]) {
 		http.NotFound(w, r)
 		return
 	}
