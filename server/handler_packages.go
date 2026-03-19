@@ -35,9 +35,9 @@ func (s *Server) ServePackages(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Validate path shape: {2-char-hex}/{hex-hash}/{filename}
+	// Validate path shape: {2-char-hex}/{2-char-hex}/{hex-hash}/{filename}
 	parts := strings.Split(pkgPath, "/")
-	if len(parts) != 3 {
+	if len(parts) != 4 {
 		http.NotFound(w, r)
 		return
 	}
